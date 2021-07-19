@@ -1,15 +1,19 @@
 using System.ComponentModel.DataAnnotations;
+using System.Linq;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 var builder = WebApplication.CreateBuilder(args);
 
-var connectionString = "Data Source=todos.db";
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 builder.Services.AddDbContext<TodoDb>(options => options.UseSqlite(connectionString));
 builder.Services.AddDatabaseDeveloperPageExceptionFilter();
 
 var app = builder.Build();
-
-await EnsureDb(connectionString);
 
 if (app.Environment.IsDevelopment())
 {
@@ -31,35 +35,35 @@ app.MapGet("/todos/incomplete", async (TodoDb db) =>
 app.MapGet("/todos/{id}", async (int id, TodoDb db) =>
     await db.Todos.FindAsync(id)
         is Todo todo
-            ? Results.Ok(todo)
-            : Results.NotFound());
+            ? (IActionResult)new OkObjectResult(todo)
+            : new NotFoundObjectResult(null));
 
 app.MapPost("/todos", async (Todo todo, TodoDb db) =>
 {
     if (!MinimalValidation.TryValidate(todo, out var errors))
-        return Results.ValidationProblem(errors);
+        return new ObjectResult(new ProblemDetails { Title = "One or more validation errors occurred." });
 
     db.Todos.Add(todo);
     await db.SaveChangesAsync();
 
-    return Results.Created($"/todos/{todo.Id}", todo);
+    return new CreatedResult($"/todos/{todo.Id}", todo);
 });
 
 app.MapPut("/todos/{id}", async (int id, Todo inputTodo, TodoDb db) =>
 {
     if (!MinimalValidation.TryValidate(inputTodo, out var errors))
-        return Results.ValidationProblem(errors);
+        return (IActionResult)new ObjectResult(new ProblemDetails { Title = "One or more validation errors occurred." });
 
     var todo = await db.Todos.FindAsync(id);
 
-    if (todo is null) return Results.NotFound();
+    if (todo is null) return new NotFoundObjectResult(null);
 
     todo.Title = inputTodo.Title;
     todo.IsComplete = inputTodo.IsComplete;
 
     await db.SaveChangesAsync();
 
-    return Results.NoContent();
+    return new NoContentResult();
 });
 
 app.MapPut("/todos/{id}/mark-complete", async (int id, TodoDb db) =>
@@ -68,11 +72,11 @@ app.MapPut("/todos/{id}/mark-complete", async (int id, TodoDb db) =>
     {
         todo.IsComplete = true;
         await db.SaveChangesAsync();
-        return Results.NoContent();
+        return (ActionResult)new NoContentResult();
     }
     else
     {
-        return Results.NotFound();
+        return new NotFoundObjectResult(null);
     }
 });
 
@@ -82,11 +86,11 @@ app.MapPut("/todos/{id}/mark-incomplete", async (int id, TodoDb db) =>
     {
         todo.IsComplete = false;
         await db.SaveChangesAsync();
-        return Results.NoContent();
+        return (ActionResult)new NoContentResult();
     }
     else
     {
-        return Results.NotFound();
+        return new NotFoundObjectResult(null);
     }
 });
 
@@ -96,23 +100,16 @@ app.MapDelete("/todos/{id}", async (int id, TodoDb db) =>
     {
         db.Todos.Remove(todo);
         await db.SaveChangesAsync();
-        return Results.Ok(todo);
+        return (ActionResult)new OkObjectResult(todo);
     }
 
-    return Results.NotFound();
+    return new NotFoundObjectResult(null);
 });
 
 app.MapDelete("/todos/delete-all", async (TodoDb db) =>
-    Results.Ok(await db.Database.ExecuteSqlRawAsync("DELETE FROM Todos")));
+    new OkObjectResult(await db.Database.ExecuteSqlRawAsync("DELETE FROM Todos")));
 
 app.Run();
-
-Task EnsureDb(string connectionString)
-{
-    var options = new DbContextOptionsBuilder<TodoDb>().UseSqlite(connectionString).Options;
-    using var db = new TodoDb(options);
-    return db.Database.MigrateAsync();
-}
 
 class Todo
 {
